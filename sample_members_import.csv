@@ -1,0 +1,7 @@
+prn,full_name,payment_status,email,contact,branch,academic_year,verification_notes
+MIT2024011,Siddharth Joshi,paid,siddharth.joshi@mitaoe.ac.in,9820112233,Computer Engineering (Software Engineering),Third Year (TY),UPI Ref 99018274
+MIT2024012,Anushka Sharma,paid,anushka.sharma@mitaoe.ac.in,9820223344,Computer Engineering (Software Engineering),Third Year (TY),Cash payment verified
+MIT2024013,Pranav Kulkarni,paid,pranav.kulkarni@mitaoe.ac.in,9820334455,Computer Engineering (Software Engineering),Second Year (SY),Annual fee paid
+MIT2024014,Tanvi Gokhale,pending,tanvi.gokhale@mitaoe.ac.in,9820445566,Computer Engineering (Software Engineering),Final Year (B.Tech),Bank transfer receipt pending
+MIT2024015,Rohan Sawant,paid,rohan.sawant@mitaoe.ac.in,9820556677,Computer Engineering (Software Engineering),Third Year (TY),Verified by Treasurer
+MIT2024001,Aarav Sharma,paid,aarav.sharma@mitaoe.ac.in,9820011221,Computer Engineering (Software Engineering),Third Year (TY),Duplicate PRN Safe Upsert Test

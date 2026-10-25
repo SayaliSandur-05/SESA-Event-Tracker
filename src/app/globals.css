@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy-950: #08162a;
+  --color-navy-900: #102137;
+  --color-navy-800: #1c3558;
+  --color-navy-dark: #08162a;
+  --color-navy-slate: #1c3558;
+  --color-gold: #b18345;
+  --color-gold-light: #e0bd7d;
+  --color-gold-dark: #8b6535;
+  --color-ivory: #fbf5eb;
+  --color-ivory-warm: #fbf5eb;
+  --font-serif: Georgia, 'Times New Roman', serif;
+  --font-sans: var(--font-inter), 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+:root {
+  --bg-primary: #fbf5eb;
+  --bg-surface: #ffffff;
+  --navy-deep: #08162a;
+  --navy-slate: #1c3558;
+  --gold: #b18345;
+  --gold-light: #e0bd7d;
+  --gold-dark: #8b6535;
+  --ivory: #fbf5eb;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--navy-deep);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display {
+  font-family: Georgia, 'Times New Roman', serif;
+}
+
+.hero-grid {
+  background-image: linear-gradient(#ffffff0b 1px, transparent 0),
+    linear-gradient(90deg, #ffffff0b 1px, transparent 0);
+  background-size: 40px 40px;
+}
+
+.section-pad {
+  padding-block: clamp(4rem, 7vw, 7rem);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #fbf5eb;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1c3558;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #08162a;
+}
