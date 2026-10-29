@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -10,8 +11,6 @@ import {
   Calendar,
   Users,
   CheckSquare,
-  ShieldAlert,
-  UserCog,
   LogOut,
   ExternalLink,
   Menu,
@@ -42,15 +41,11 @@ export function DashboardSidebar({ children }: { children: React.ReactNode }) {
     router.push("/login");
   };
 
-  const isSuperAdmin = currentUser?.role === "super_admin";
-
   const navigation = [
     { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
     { name: "Events Manager", href: "/dashboard/events", icon: Calendar },
     { name: "Membership & CSV", href: "/dashboard/memberships", icon: Users },
     { name: "Venue Desk", href: "/desk", icon: CheckSquare },
-    
-    ...(isSuperAdmin ? [{ name: "User Roles", href: "/dashboard/users", icon: UserCog }] : []),
   ];
 
   const isActive = (href: string) => {
@@ -94,6 +89,7 @@ export function DashboardSidebar({ children }: { children: React.ReactNode }) {
           {navigation.map((item) => {
             const active = isActive(item.href);
             const Icon = item.icon;
+
             return (
               <Link
                 key={item.name}
@@ -132,7 +128,11 @@ export function DashboardSidebar({ children }: { children: React.ReactNode }) {
             onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
             className="p-1.5 text-gray-300 hover:text-white"
           >
-            {mobileSidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            {mobileSidebarOpen ? (
+              <X className="w-6 h-6" />
+            ) : (
+              <Menu className="w-6 h-6" />
+            )}
           </button>
         </header>
 
@@ -145,12 +145,15 @@ export function DashboardSidebar({ children }: { children: React.ReactNode }) {
                 href={item.href}
                 onClick={() => setMobileSidebarOpen(false)}
                 className={`block px-3 py-2 rounded text-xs font-semibold uppercase ${
-                  isActive(item.href) ? "bg-[#263346] text-[#E4BC70]" : "text-[#AEB9C9]"
+                  isActive(item.href)
+                    ? "bg-[#263346] text-[#E4BC70]"
+                    : "text-[#AEB9C9]"
                 }`}
               >
                 {item.name}
               </Link>
             ))}
+
             <button
               onClick={handleLogout}
               className="w-full text-left px-3 py-2 text-xs text-red-400 font-semibold uppercase"
