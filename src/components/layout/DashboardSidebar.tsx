@@ -49,7 +49,7 @@ export function DashboardSidebar({ children }: { children: React.ReactNode }) {
     { name: "Events Manager", href: "/dashboard/events", icon: Calendar },
     { name: "Membership & CSV", href: "/dashboard/memberships", icon: Users },
     { name: "Venue Desk", href: "/desk", icon: CheckSquare },
-    { name: "Audit Trail", href: "/dashboard/audit", icon: ShieldAlert },
+    
     ...(isSuperAdmin ? [{ name: "User Roles", href: "/dashboard/users", icon: UserCog }] : []),
   ];
 

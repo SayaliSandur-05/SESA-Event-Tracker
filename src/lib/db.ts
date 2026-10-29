@@ -436,113 +436,267 @@ export const db = {
   },
 
   // --- EVENTS ---
-  async getEvents(includeAllStatuses: boolean = false): Promise<EventItem[]> {
-    const store = ensureDataFile();
-    if (includeAllStatuses) {
-      return [...store.events].sort((a, b) => b.starts_at.localeCompare(a.starts_at));
-    }
-    // Public visibility: only "published" or "registration_closed" or "completed"
-    return store.events
-      .filter((e) => ["published", "registration_closed", "completed"].includes(e.status))
-      .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
-  },
+async getEvents(includeAllStatuses: boolean = false): Promise<EventItem[]> {
+  let query = supabaseAdmin
+    .from("events")
+    .select("*");
 
-  async getEventById(idOrSlug: string): Promise<EventItem | null> {
-    const store = ensureDataFile();
-    return store.events.find((e) => e.id === idOrSlug || e.slug === idOrSlug) || null;
-  },
+  if (!includeAllStatuses) {
+    query = query.in("status", [
+      "published",
+      "registration_closed",
+      "completed",
+    ]);
+  }
 
-  async createEvent(
-    data: Omit<EventItem, "id" | "created_at" | "updated_at">,
-    actor: { id: string; name: string }
-  ): Promise<EventItem> {
-    const store = ensureDataFile();
-    const id = `event_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const now = new Date().toISOString();
+  const { data, error } = await query.order("starts_at", {
+    ascending: !includeAllStatuses,
+  });
 
-    // Ensure slug uniqueness
-    let slug = data.slug.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-    if (!slug) slug = `event-${Date.now()}`;
-    const slugExists = store.events.some((e) => e.slug === slug);
-    if (slugExists) {
-      slug = `${slug}-${Date.now().toString().slice(-4)}`;
-    }
+  if (error) {
+    console.error("Supabase get events failed:", error.message);
+    throw new Error(`Could not fetch events: ${error.message}`);
+  }
 
-    const newEvent: EventItem = {
-      ...data,
-      id,
+  return (data ?? []) as EventItem[];
+},
+
+async getEventById(idOrSlug: string): Promise<EventItem | null> {
+  const isUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      idOrSlug
+    );
+
+  let query = supabaseAdmin
+    .from("events")
+    .select("*");
+
+  query = isUuid
+    ? query.eq("id", idOrSlug)
+    : query.eq("slug", idOrSlug);
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) {
+    console.error("Supabase get event failed:", error.message);
+    throw new Error(`Could not fetch event: ${error.message}`);
+  }
+
+  return data as EventItem | null;
+},
+
+async createEvent(
+  data: Omit<EventItem, "id" | "created_at" | "updated_at">,
+  actor: { id: string; name: string }
+): Promise<EventItem> {
+  let slug = data.slug
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+
+  if (!slug) {
+    slug = `event-${Date.now()}`;
+  }
+
+  const { data: existingSlug, error: slugError } = await supabaseAdmin
+    .from("events")
+    .select("id")
+    .eq("slug", slug)
+    .maybeSingle();
+
+  if (slugError) {
+    throw new Error(`Could not check event slug: ${slugError.message}`);
+  }
+
+  if (existingSlug) {
+    slug = `${slug}-${Date.now().toString().slice(-4)}`;
+  }
+
+  const { data: event, error } = await supabaseAdmin
+    .from("events")
+    .insert({
+      name: data.name,
       slug,
+      summary: data.summary,
+      description: data.description,
+      venue: data.venue,
+      starts_at: data.starts_at,
+      ends_at: data.ends_at,
+      registration_opens_at: data.registration_opens_at,
+      registration_closes_at: data.registration_closes_at,
+      capacity: data.capacity,
+      walk_ins_enabled: data.walk_ins_enabled,
+      status: data.status,
+      banner_url: data.banner_url ?? null,
       created_by: actor.name,
-      created_at: now,
-      updated_at: now,
-    };
+    })
+    .select("*")
+    .single();
 
-    store.events.unshift(newEvent);
-    saveStore(store);
+  if (error) {
+    console.error("Supabase create event failed:", error.message);
+    throw new Error(`Could not create event: ${error.message}`);
+  }
 
-    await db.logAudit(actor.id, actor.name, "EVENT_CREATED", "events", id, {
-      name: newEvent.name,
-      slug: newEvent.slug,
-      status: newEvent.status,
-    });
+  await db.logAudit(
+    actor.id,
+    actor.name,
+    "EVENT_CREATED",
+    "events",
+    event.id,
+    {
+      name: event.name,
+      slug: event.slug,
+      status: event.status,
+    }
+  );
 
-    return newEvent;
-  },
+  return event as EventItem;
+},
+async updateEvent(
+  id: string,
+  data: Partial<Omit<EventItem, "id" | "created_at">>,
+  actor: { id: string; name: string }
+): Promise<EventItem> {
+  const allowedFields = [
+    "name",
+    "slug",
+    "summary",
+    "description",
+    "venue",
+    "starts_at",
+    "ends_at",
+    "registration_opens_at",
+    "registration_closes_at",
+    "capacity",
+    "walk_ins_enabled",
+    "status",
+    "banner_url",
+  ] as const;
 
-  async updateEvent(
-    id: string,
-    data: Partial<Omit<EventItem, "id" | "created_at">>,
-    actor: { id: string; name: string }
-  ): Promise<EventItem> {
-    const store = ensureDataFile();
-    const index = store.events.findIndex((e) => e.id === id);
-    if (index === -1) throw new Error("Event not found");
+  const updates: Record<string, unknown> = {};
 
-    const existing = store.events[index];
-    const updated: EventItem = {
-      ...existing,
-      ...data,
-      updated_at: new Date().toISOString(),
-    };
+  for (const field of allowedFields) {
+    if (data[field] !== undefined) {
+      updates[field] = data[field];
+    }
+  }
 
-    store.events[index] = updated;
-    saveStore(store);
+  updates.updated_at = new Date().toISOString();
 
-    await db.logAudit(actor.id, actor.name, "EVENT_UPDATED", "events", id, {
+  const { data: updated, error } = await supabaseAdmin
+    .from("events")
+    .update(updates)
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Could not update event: ${error.message}`);
+  }
+
+  if (!updated) {
+    throw new Error("Event not found");
+  }
+
+  await db.logAudit(
+    actor.id,
+    actor.name,
+    "EVENT_UPDATED",
+    "events",
+    id,
+    {
       name: updated.name,
       status: updated.status,
-    });
+    }
+  );
 
-    return updated;
-  },
+  return updated as EventItem;
+},
+async deleteEvent(
+  id: string,
+  actor: { id: string; name: string }
+): Promise<void> {
+  const { data: event, error: fetchError } = await supabaseAdmin
+    .from("events")
+    .select("id, status")
+    .eq("id", id)
+    .maybeSingle();
 
-  async deleteEvent(id: string, actor: { id: string; name: string }): Promise<void> {
-    const store = ensureDataFile();
-    const event = store.events.find((e) => e.id === id);
-    if (!event) throw new Error("Event not found");
+  if (fetchError) {
+    throw new Error(`Could not find event: ${fetchError.message}`);
+  }
 
-    // Soft archive or cancel instead of hard deletion if attendance records exist
-    const hasRegistrations = store.registrations.some((r) => r.event_id === id);
-    if (hasRegistrations) {
-      event.status = "archived";
-      event.updated_at = new Date().toISOString();
-      saveStore(store);
-      await db.logAudit(actor.id, actor.name, "EVENT_ARCHIVED", "events", id, {
-        reason: "Event has existing registration records",
-      });
-      return;
+  if (!event) {
+    throw new Error("Event not found");
+  }
+
+  const { count, error: registrationError } = await supabaseAdmin
+    .from("event_registrations")
+    .select("id", { count: "exact", head: true })
+    .eq("event_id", id);
+
+  if (registrationError) {
+    throw new Error(
+      `Could not check event registrations: ${registrationError.message}`
+    );
+  }
+
+  if ((count ?? 0) > 0) {
+    const { error } = await supabaseAdmin
+      .from("events")
+      .update({
+        status: "archived",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+
+    if (error) {
+      throw new Error(`Could not archive event: ${error.message}`);
     }
 
-    store.events = store.events.filter((e) => e.id !== id);
-    saveStore(store);
-    await db.logAudit(actor.id, actor.name, "EVENT_DELETED", "events", id);
-  },
+    await db.logAudit(
+      actor.id,
+      actor.name,
+      "EVENT_ARCHIVED",
+      "events",
+      id,
+      { reason: "Event has existing registration records" }
+    );
+
+    return;
+  }
+
+  const { error: deleteError } = await supabaseAdmin
+    .from("events")
+    .delete()
+    .eq("id", id);
+
+  if (deleteError) {
+    throw new Error(`Could not delete event: ${deleteError.message}`);
+  }
+
+  await db.logAudit(actor.id, actor.name, "EVENT_DELETED", "events", id);
+},
 
   // --- REGISTRATIONS & ELIGIBILITY ---
-  async getRegistrationsByEvent(eventId: string): Promise<EventRegistration[]> {
-    const store = ensureDataFile();
-    return store.registrations.filter((r) => r.event_id === eventId);
-  },
+async getRegistrationsByEvent(
+  eventId: string
+): Promise<EventRegistration[]> {
+  const { data, error } = await supabaseAdmin
+    .from("event_registrations")
+    .select("*")
+    .eq("event_id", eventId)
+    .order("registered_at", { ascending: true });
+
+  if (error) {
+    console.error("Failed to fetch event registrations:", error.message);
+    throw new Error(`Could not fetch registrations: ${error.message}`);
+  }
+
+  return (data ?? []) as EventRegistration[];
+},
 
   
 async getRegistrationsByPrn(prn: string): Promise<
@@ -643,87 +797,149 @@ async getRegistrationsByPrn(prn: string): Promise<
    * 4. Prevents duplicate registrations.
    */
   async registerStudent(params: {
-    eventId: string;
-    prn: string;
-    email: string;
-    contact?: string;
-  }): Promise<{ registration: EventRegistration; event: EventItem }> {
-    const store = ensureDataFile();
-    const normPrn = normalizePrn(params.prn);
-    if (!normPrn) throw new Error("Valid PRN is required");
+  eventId: string;
+  prn: string;
+  email: string;
+  contact?: string;
+}): Promise<{ registration: EventRegistration; event: EventItem }> {
+  const normPrn = normalizePrn(params.prn);
 
-    // 1. Membership check
-    const membership = store.memberships.find((m) => m.prn === normPrn);
-    if (!membership) {
-      throw new Error("PRN not found in membership records. Please visit SESA membership desk.");
-    }
-    if (membership.payment_status !== "paid") {
-      throw new Error(
-        `Membership payment status is '${membership.payment_status.toUpperCase()}'. Only verified paid members can register.`
-      );
-    }
+  if (!normPrn) {
+    throw new Error("Valid PRN is required");
+  }
 
-    // 2. Event check
-    const event = store.events.find((e) => e.id === params.eventId);
-    if (!event) throw new Error("Event not found");
+  // 1. Verify membership in Supabase
+  const { data: membership, error: membershipError } = await supabaseAdmin
+    .from("memberships")
+    .select("*")
+    .ilike("prn", normPrn)
+    .maybeSingle();
 
-    if (event.status !== "published") {
-      throw new Error(`Event is currently ${event.status.replace("_", " ")}.`);
-    }
+  if (membershipError) {
+    throw new Error(`Could not verify membership: ${membershipError.message}`);
+  }
 
-    const now = new Date();
-    if (new Date(event.registration_closes_at) < now) {
-      throw new Error("Registration for this event has closed.");
-    }
-    if (new Date(event.registration_opens_at) > now) {
-      throw new Error("Registration has not opened yet.");
-    }
-
-    // 3. Duplicate check
-    const existing = store.registrations.find(
-      (r) => r.event_id === params.eventId && r.prn === normPrn
+  if (!membership) {
+    throw new Error(
+      "PRN not found in membership records. Please visit SESA membership desk."
     );
-    if (existing) {
-      throw new Error(`Student ${normPrn} is already registered for this event.`);
+  }
+
+  if (membership.payment_status !== "paid") {
+    throw new Error(
+      `Membership payment status is '${membership.payment_status.toUpperCase()}'. Only verified paid members can register.`
+    );
+  }
+
+  // 2. Find the event in Supabase
+  const { data: event, error: eventError } = await supabaseAdmin
+    .from("events")
+    .select("*")
+    .eq("id", params.eventId)
+    .maybeSingle();
+
+  if (eventError) {
+    throw new Error(`Could not fetch event: ${eventError.message}`);
+  }
+
+  if (!event) {
+    throw new Error("Event not found");
+  }
+
+  if (event.status !== "published") {
+    throw new Error(`Event is currently ${event.status.replace("_", " ")}.`);
+  }
+
+  const now = new Date();
+
+  if (new Date(event.registration_closes_at) < now) {
+    throw new Error("Registration for this event has closed.");
+  }
+
+  if (new Date(event.registration_opens_at) > now) {
+    throw new Error("Registration has not opened yet.");
+  }
+
+  // 3. Check for existing registration
+  const { data: existing, error: duplicateError } = await supabaseAdmin
+    .from("event_registrations")
+    .select("id")
+    .eq("event_id", event.id)
+    .ilike("prn", normPrn)
+    .maybeSingle();
+
+  if (duplicateError) {
+    throw new Error(`Could not check registration: ${duplicateError.message}`);
+  }
+
+  if (existing) {
+    throw new Error(`Student ${normPrn} is already registered for this event.`);
+  }
+
+  // 4. Check event capacity
+  if (event.capacity !== null && event.capacity !== undefined) {
+    const { count, error: countError } = await supabaseAdmin
+      .from("event_registrations")
+      .select("id", { count: "exact", head: true })
+      .eq("event_id", event.id)
+      .neq("registration_status", "cancelled");
+
+    if (countError) {
+      throw new Error(`Could not check event capacity: ${countError.message}`);
     }
 
-    // 4. Capacity check
-    const currentRegCount = store.registrations.filter((r) => r.event_id === params.eventId).length;
-    if (event.capacity !== null && currentRegCount >= event.capacity) {
+    if ((count ?? 0) >= event.capacity) {
       throw new Error("Event has reached maximum capacity.");
     }
+  }
 
-    // 5. Create registration
-    const newReg: EventRegistration = {
-      id: `reg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+  // 5. Insert registration into Supabase
+  const { data: registration, error: registrationError } = await supabaseAdmin
+    .from("event_registrations")
+    .insert({
       event_id: event.id,
       membership_id: membership.id,
-      prn: normPrn,
+      prn: membership.prn,
       student_name_snapshot: membership.full_name,
       email: params.email.trim(),
-      contact: params.contact ? params.contact.trim() : membership.contact || "",
+      contact: params.contact?.trim() || membership.contact || "",
       registration_type: "online",
       registered_at: now.toISOString(),
       registration_status: "confirmed",
-    };
+    })
+    .select("*")
+    .single();
 
-    store.registrations.push(newReg);
-    saveStore(store);
+  if (registrationError) {
+    if (registrationError.code === "23505") {
+      throw new Error(`Student ${normPrn} is already registered for this event.`);
+    }
 
-    await db.logAudit(normPrn, membership.full_name, "STUDENT_REGISTERED", "event_registrations", newReg.id, {
+    console.error("Supabase registration failed:", registrationError.message);
+    throw new Error(`Could not save registration: ${registrationError.message}`);
+  }
+
+  await db.logAudit(
+    normPrn,
+    membership.full_name,
+    "STUDENT_REGISTERED",
+    "event_registrations",
+    registration.id,
+    {
       eventId: event.id,
       eventName: event.name,
       prn: normPrn,
-    });
+    }
+  );
 
-    return { registration: newReg, event };
-  },
+  return {
+    registration: registration as EventRegistration,
+    event: event as EventItem,
+  };
+},
 
   // --- ATTENDANCE & VENUE DESK ---
-  async getAttendanceByEvent(eventId: string): Promise<AttendanceRecord[]> {
-    const store = ensureDataFile();
-    return store.attendance.filter((a) => a.event_id === eventId);
-  },
+ 
 
   /**
    * Fast Venue Search by PRN:
@@ -928,6 +1144,7 @@ const attRecord = {
    * 4. Creates registration + attendance simultaneously.
    */
 
+
 async registerWalkInAndCheckIn(params: {
   eventId: string;
   prn: string;
@@ -939,9 +1156,12 @@ async registerWalkInAndCheckIn(params: {
   attendance: AttendanceRecord;
 }> {
   const norm = normalizePrn(params.prn);
-  if (!norm) throw new Error("Valid PRN is required");
 
-  // 1. Load the event from Supabase.
+  if (!norm) {
+    throw new Error("Valid PRN is required");
+  }
+
+  // 1. Load event from Supabase.
   const { data: event, error: eventError } = await supabaseAdmin
     .from("events")
     .select("*")
@@ -951,7 +1171,10 @@ async registerWalkInAndCheckIn(params: {
   if (eventError) {
     throw new Error(`Failed to load event: ${eventError.message}`);
   }
-  if (!event) throw new Error("Event not found");
+
+  if (!event) {
+    throw new Error("Event not found");
+  }
 
   if (!event.walk_ins_enabled) {
     throw new Error("Walk-in registration is not enabled for this event.");
@@ -961,7 +1184,7 @@ async registerWalkInAndCheckIn(params: {
     throw new Error(`Cannot register walk-in for a ${event.status} event.`);
   }
 
-  // 2. Verify paid SESA membership in Supabase.
+  // 2. Verify paid membership.
   const { data: membership, error: membershipError } =
     await supabaseAdmin
       .from("memberships")
@@ -989,12 +1212,12 @@ async registerWalkInAndCheckIn(params: {
     );
   }
 
-  // 3. Check whether this student already has a registration.
+  // 3. Check for an existing registration.
   const { data: existingReg, error: existingRegError } =
     await supabaseAdmin
       .from("event_registrations")
       .select("*")
-      .eq("event_id", params.eventId)
+      .eq("event_id", event.id)
       .ilike("prn", norm)
       .neq("registration_status", "cancelled")
       .maybeSingle();
@@ -1027,10 +1250,9 @@ async registerWalkInAndCheckIn(params: {
       );
     }
 
-    // Already registered: mark present, but do not relabel
-    // an online registration as a walk-in.
+    // Existing registration: mark attendance without creating a duplicate.
     const attendance = await db.markPresent(
-      params.eventId,
+      event.id,
       existingReg.id,
       params.actor
     );
@@ -1041,15 +1263,13 @@ async registerWalkInAndCheckIn(params: {
     };
   }
 
-  // 4. Check event capacity against Supabase registrations.
-  const {
-    count: currentRegCount,
-    error: countError,
-  } = await supabaseAdmin
-    .from("event_registrations")
-    .select("id", { count: "exact", head: true })
-    .eq("event_id", params.eventId)
-    .neq("registration_status", "cancelled");
+  // 4. Check event capacity.
+  const { count: currentRegCount, error: countError } =
+    await supabaseAdmin
+      .from("event_registrations")
+      .select("id", { count: "exact", head: true })
+      .eq("event_id", event.id)
+      .neq("registration_status", "cancelled");
 
   if (countError) {
     throw new Error(
@@ -1062,31 +1282,26 @@ async registerWalkInAndCheckIn(params: {
     event.capacity !== undefined &&
     (currentRegCount ?? 0) >= event.capacity
   ) {
-    throw new Error(
-      `Event is at full capacity (${event.capacity} seats).`
-    );
+    throw new Error(`Event is at full capacity (${event.capacity} seats).`);
   }
 
-  // 5. Create the walk-in registration in Supabase.
+  // 5. Create walk-in registration.
+  // Do not supply an ID: Supabase generates the UUID.
   const now = new Date().toISOString();
 
   const { data: savedRegistration, error: registrationInsertError } =
     await supabaseAdmin
       .from("event_registrations")
       .insert({
-        id: `reg_${Date.now()}_${Math.random()
-          .toString(36)
-          .substring(2, 8)}`,
         event_id: event.id,
         membership_id: membership.id,
-        prn: norm,
+        prn: membership.prn,
         student_name_snapshot: membership.full_name,
-        email: params.email?.trim() ||
+        email:
+          params.email?.trim() ||
           membership.email ||
           `${norm.toLowerCase()}@mitaoe.ac.in`,
-        contact: params.contact
-          ? String(params.contact).trim()
-          : membership.contact || "",
+        contact: params.contact?.trim() || membership.contact || "",
         registration_type: "walk_in",
         registered_at: now,
         registration_status: "confirmed",
@@ -1106,27 +1321,24 @@ async registerWalkInAndCheckIn(params: {
     );
   }
 
-  // 6. Link the attendance record to the saved registration ID.
+  // 6. Create attendance linked to the generated registration UUID.
   const { data: savedAttendance, error: attendanceInsertError } =
     await supabaseAdmin
       .from("attendance")
       .insert({
-        id: crypto.randomUUID(),
         event_id: event.id,
         registration_id: savedRegistration.id,
-        prn: norm,
+        prn: membership.prn,
         checked_in_at: now,
         checked_in_by: params.actor.id,
         checked_in_by_name: params.actor.name,
         method: "walk_in",
-        created_at: now,
       })
       .select("*")
       .single();
 
   if (attendanceInsertError) {
-    // Best-effort cleanup so a failed check-in does not leave
-    // an incomplete walk-in registration behind.
+    // Best-effort cleanup if attendance could not be created.
     const { error: cleanupError } = await supabaseAdmin
       .from("event_registrations")
       .delete()
@@ -1150,7 +1362,7 @@ async registerWalkInAndCheckIn(params: {
     );
   }
 
-  // 7. Audit the successful walk-in check-in.
+  // 7. Record audit log.
   await db.logAudit(
     params.actor.id,
     params.actor.name,
@@ -1159,7 +1371,7 @@ async registerWalkInAndCheckIn(params: {
     savedAttendance.id,
     {
       eventId: event.id,
-      prn: norm,
+      prn: membership.prn,
       studentName: membership.full_name,
     }
   );
@@ -1170,64 +1382,160 @@ async registerWalkInAndCheckIn(params: {
   };
 },
 
+
   // --- DETAILED REPORTING & STATS ---
-  async getDashboardStats(): Promise<DashboardStats> {
-    const store = ensureDataFile();
-    const totalEvents = store.events.length;
-    const activeEventsCount = store.events.filter((e) =>
-      ["published", "registration_closed"].includes(e.status)
-    ).length;
-    const totalRegistrations = store.registrations.length;
-    const totalCheckedIn = store.attendance.length;
-    const totalWalkIns = store.registrations.filter((r) => r.registration_type === "walk_in").length;
-    const totalPaidMembers = store.memberships.filter((m) => m.payment_status === "paid").length;
-    const totalPendingMembers = store.memberships.filter(
-      (m) => m.payment_status === "pending"
-    ).length;
 
-    return {
-      totalEvents,
-      activeEventsCount,
-      totalRegistrations,
-      totalCheckedIn,
-      totalWalkIns,
-      totalPaidMembers,
-      totalPendingMembers,
-      recentActivity: store.auditLogs.slice(0, 15),
-    };
-  },
+async getDashboardStats(): Promise<DashboardStats> {
+  const [
+    eventsResult,
+    registrationsResult,
+    attendanceResult,
+    membershipsResult,
+  ] = await Promise.all([
+    supabaseAdmin.from("events").select("id, status"),
+    supabaseAdmin
+      .from("event_registrations")
+      .select("id, registration_type"),
+    supabaseAdmin.from("attendance").select("id"),
+    supabaseAdmin.from("memberships").select("payment_status"),
+  ]);
 
-  async getEventDetailedStats(eventId: string): Promise<EventDetailedStats | null> {
-    const store = ensureDataFile();
-    const event = store.events.find((e) => e.id === eventId);
-    if (!event) return null;
+  const results = [
+    eventsResult,
+    registrationsResult,
+    attendanceResult,
+    membershipsResult,
+  ];
 
-    const registrations = store.registrations.filter((r) => r.event_id === eventId);
-    const attendance = store.attendance.filter((a) => a.event_id === eventId);
+  const failedResult = results.find((result) => result.error);
 
-    const totalRegistered = registrations.length;
-    const totalConfirmed = registrations.filter((r) => r.registration_status === "confirmed").length;
-    const totalWalkIns = registrations.filter((r) => r.registration_type === "walk_in").length;
-    const totalPresent = attendance.length;
-    const totalAbsent = Math.max(0, totalRegistered - totalPresent);
-    const remainingCapacity =
-      event.capacity !== null ? Math.max(0, event.capacity - totalRegistered) : null;
-    const attendancePercentage =
-      totalRegistered > 0 ? Math.round((totalPresent / totalRegistered) * 100) : 0;
+  if (failedResult?.error) {
+    throw new Error(
+      `Could not fetch dashboard statistics: ${failedResult.error.message}`
+    );
+  }
 
-    return {
-      event,
-      totalRegistered,
-      totalConfirmed,
-      totalWalkIns,
-      totalPresent,
-      totalAbsent,
-      remainingCapacity,
-      attendancePercentage,
-      assignedVolunteers: store.profiles.filter((p) => p.role === "volunteer"),
-    };
-  },
+  const events = eventsResult.data ?? [];
+  const registrations = registrationsResult.data ?? [];
+  const attendance = attendanceResult.data ?? [];
+  const memberships = membershipsResult.data ?? [];
 
+  return {
+    totalEvents: events.length,
+
+    activeEventsCount: events.filter((event) =>
+      ["published", "registration_closed"].includes(event.status)
+    ).length,
+
+    totalRegistrations: registrations.length,
+
+    totalCheckedIn: attendance.length,
+
+    totalWalkIns: registrations.filter(
+      (registration) => registration.registration_type === "walk_in"
+    ).length,
+
+    totalPaidMembers: memberships.filter(
+      (membership) => membership.payment_status === "paid"
+    ).length,
+
+    totalPendingMembers: memberships.filter(
+      (membership) => membership.payment_status === "pending"
+    ).length,
+
+    recentActivity: [],
+  };
+},
+
+
+async getEventDetailedStats(
+  eventId: string
+): Promise<EventDetailedStats | null> {
+  const [
+    { data: event, error: eventError },
+    { data: registrations, error: registrationsError },
+    { data: attendance, error: attendanceError },
+    { data: profiles, error: profilesError },
+  ] = await Promise.all([
+    supabaseAdmin
+      .from("events")
+      .select("*")
+      .eq("id", eventId)
+      .maybeSingle(),
+
+    supabaseAdmin
+      .from("event_registrations")
+      .select("*")
+      .eq("event_id", eventId)
+      .neq("registration_status", "cancelled"),
+
+    supabaseAdmin
+      .from("attendance")
+      .select("*")
+      .eq("event_id", eventId),
+
+    supabaseAdmin
+      .from("profiles")
+      .select("*")
+      .eq("role", "volunteer"),
+  ]);
+
+  if (eventError) {
+    throw new Error(`Could not fetch event: ${eventError.message}`);
+  }
+  if (registrationsError) {
+    throw new Error(
+      `Could not fetch registrations: ${registrationsError.message}`
+    );
+  }
+  if (attendanceError) {
+    throw new Error(
+      `Could not fetch attendance: ${attendanceError.message}`
+    );
+  }
+  if (profilesError) {
+    throw new Error(
+      `Could not fetch volunteers: ${profilesError.message}`
+    );
+  }
+
+  if (!event) return null;
+
+  const allRegistrations = registrations ?? [];
+  const allAttendance = attendance ?? [];
+
+  const totalRegistered = allRegistrations.length;
+  const totalConfirmed = allRegistrations.filter(
+    (r) => r.registration_status === "confirmed"
+  ).length;
+  const totalWalkIns = allRegistrations.filter(
+    (r) => r.registration_type === "walk_in"
+  ).length;
+  const totalPresent = allAttendance.length;
+  const totalAbsent = Math.max(0, totalRegistered - totalPresent);
+
+  const remainingCapacity =
+    event.capacity !== null
+      ? Math.max(0, event.capacity - totalRegistered)
+      : null;
+
+  const attendancePercentage =
+    totalRegistered > 0
+      ? Math.round((totalPresent / totalRegistered) * 100)
+      : 0;
+
+  return {
+    event: event as EventItem,
+    totalRegistered,
+    totalConfirmed,
+    totalWalkIns,
+    totalPresent,
+    totalAbsent,
+    remainingCapacity,
+    attendancePercentage,
+    assignedVolunteers: (profiles ?? []) as Profile[],
+  };
+},
   
 async getEventAttendeesCombined(eventId: string): Promise<
   Array<{
