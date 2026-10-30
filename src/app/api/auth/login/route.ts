@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
       AUTH_COOKIE_OPTIONS
     );
 
-    await db.logAudit(profile.id, profile.full_name, "USER_LOGIN", "profiles", profile.id);
+    
 
     return response;
   } catch (error: any) {

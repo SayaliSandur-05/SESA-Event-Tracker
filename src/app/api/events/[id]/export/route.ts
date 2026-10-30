@@ -35,10 +35,6 @@ export async function GET(
       filename = `${event.slug}_registrations_${new Date().toISOString().split("T")[0]}.csv`;
     }
 
-    await db.logAudit(user.id, user.full_name, "EVENT_REPORT_EXPORTED", "events", event.id, {
-      exportType,
-      rowCount: attendees.length,
-    });
 
     return new NextResponse(csvContent, {
       status: 200,

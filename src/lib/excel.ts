@@ -1,3 +1,4 @@
+
 import * as XLSX from "xlsx";
 import { normalizePrn } from "./utils";
 
@@ -25,24 +26,38 @@ export interface ParseResult {
 }
 
 /**
- * Universal parser for Excel (.xlsx, .xls) and CSV
+ * Universal parser for Excel (.xlsx, .xls) and CSV files.
  */
-export function parseMembershipSheet(bufferOrString: ArrayBuffer | Uint8Array | string): ParseResult {
+export function parseMembershipSheet(
+  bufferOrString: ArrayBuffer | Uint8Array | string
+): ParseResult {
   let workbook: XLSX.WorkBook;
 
   if (typeof bufferOrString === "string") {
     workbook = XLSX.read(bufferOrString, { type: "string" });
   } else {
-    const uint8 = bufferOrString instanceof Uint8Array ? bufferOrString : new Uint8Array(bufferOrString);
+    const uint8 =
+      bufferOrString instanceof Uint8Array
+        ? bufferOrString
+        : new Uint8Array(bufferOrString);
+
     workbook = XLSX.read(uint8, { type: "array" });
   }
 
   const sheetName = workbook.SheetNames[0];
+
   if (!sheetName) {
-    return { records: [], totalRows: 0, validRows: 0, invalidRows: 0, duplicatePrns: [] };
+    return {
+      records: [],
+      totalRows: 0,
+      validRows: 0,
+      invalidRows: 0,
+      duplicatePrns: [],
+    };
   }
 
   const sheet = workbook.Sheets[sheetName];
+
   const rawRows: Record<string, any>[] = XLSX.utils.sheet_to_json(sheet, {
     defval: "",
     raw: false,
@@ -55,12 +70,16 @@ export function parseMembershipSheet(bufferOrString: ArrayBuffer | Uint8Array | 
   for (let idx = 0; idx < rawRows.length; idx++) {
     const raw = rawRows[idx];
 
+    // Normalize Excel column headings.
     const normalizedKeys: Record<string, any> = {};
+
     for (const [k, v] of Object.entries(raw)) {
       const cleanKey = k.trim().toLowerCase().replace(/[\s._-]+/g, "_");
-      normalizedKeys[cleanKey] = typeof v === "string" ? v.trim() : v;
+      normalizedKeys[cleanKey] =
+        typeof v === "string" ? v.trim() : v;
     }
 
+    // PRN
     const rawPrn =
       normalizedKeys["prn"] ||
       normalizedKeys["college_id"] ||
@@ -68,8 +87,10 @@ export function parseMembershipSheet(bufferOrString: ArrayBuffer | Uint8Array | 
       normalizedKeys["roll_no"] ||
       normalizedKeys["id"] ||
       "";
+
     const prn = normalizePrn(String(rawPrn));
 
+    // Student name
     const fullName = String(
       normalizedKeys["full_name"] ||
         normalizedKeys["name"] ||
@@ -78,6 +99,7 @@ export function parseMembershipSheet(bufferOrString: ArrayBuffer | Uint8Array | 
         ""
     ).trim();
 
+    // Email
     const email = String(
       normalizedKeys["email"] ||
         normalizedKeys["email_address"] ||
@@ -85,6 +107,7 @@ export function parseMembershipSheet(bufferOrString: ArrayBuffer | Uint8Array | 
         ""
     ).trim();
 
+    // Contact
     const contact = String(
       normalizedKeys["contact"] ||
         normalizedKeys["phone"] ||
@@ -93,12 +116,14 @@ export function parseMembershipSheet(bufferOrString: ArrayBuffer | Uint8Array | 
         ""
     ).trim();
 
+    // Branch
     const branch = String(
       normalizedKeys["branch"] ||
         normalizedKeys["department"] ||
         "Department Of Software Engineering"
     ).trim();
 
+    // Academic year
     const academicYear = String(
       normalizedKeys["academic_year"] ||
         normalizedKeys["year"] ||
@@ -106,21 +131,54 @@ export function parseMembershipSheet(bufferOrString: ArrayBuffer | Uint8Array | 
         "Third Year (TY)"
     ).trim();
 
+    // Payment status
+    const hasPaymentStatusColumn =
+      Object.prototype.hasOwnProperty.call(
+        normalizedKeys,
+        "payment_status"
+      ) ||
+      Object.prototype.hasOwnProperty.call(normalizedKeys, "status") ||
+      Object.prototype.hasOwnProperty.call(normalizedKeys, "paid");
+
     const rawStatus = String(
-      normalizedKeys["payment_status"] ||
-        normalizedKeys["status"] ||
-        normalizedKeys["paid"] ||
-        "paid"
-    ).toLowerCase();
+      normalizedKeys["payment_status"] ??
+        normalizedKeys["status"] ??
+        normalizedKeys["paid"] ??
+        ""
+    )
+      .trim()
+      .toLowerCase();
 
     let paymentStatus: "paid" | "pending" | "unpaid" = "paid";
-    if (rawStatus.includes("unpaid") || rawStatus === "no" || rawStatus === "pending") {
-      paymentStatus = rawStatus.includes("unpaid") || rawStatus === "no" ? "unpaid" : "pending";
+
+    if (!hasPaymentStatusColumn) {
+      // The uploaded sheet itself is the verified paid-members list.
+      paymentStatus = "paid";
+    } else if (["paid", "yes", "true"].includes(rawStatus)) {
+      paymentStatus = "paid";
+    } else if (["unpaid", "no", "false"].includes(rawStatus)) {
+      paymentStatus = "unpaid";
+    } else {
+      // Blank or unclear status must not be treated as paid.
+      paymentStatus = "pending";
     }
 
-    const rawAmount = normalizedKeys["fee_amount"] || normalizedKeys["amount"] || normalizedKeys["fee"];
-    const feeAmount = rawAmount ? Number(String(rawAmount).replace(/[^0-9.]/g, "")) : 1000;
+    // Fee amount
+    const rawAmount =
+      normalizedKeys["fee_amount"] ||
+      normalizedKeys["amount"] ||
+      normalizedKeys["fee"];
 
+    const parsedAmount = rawAmount
+      ? Number(String(rawAmount).replace(/[^0-9.]/g, ""))
+      : 1000;
+
+    const feeAmount =
+      Number.isFinite(parsedAmount) && parsedAmount > 0
+        ? parsedAmount
+        : 1000;
+
+    // Payment mode
     const paymentMode = String(
       normalizedKeys["payment_mode"] ||
         normalizedKeys["mode"] ||
@@ -128,6 +186,7 @@ export function parseMembershipSheet(bufferOrString: ArrayBuffer | Uint8Array | 
         "Excel / CSV Bulk Import"
     ).trim();
 
+    // Verification notes
     const verificationNotes = String(
       normalizedKeys["verification_notes"] ||
         normalizedKeys["notes"] ||
@@ -137,6 +196,7 @@ export function parseMembershipSheet(bufferOrString: ArrayBuffer | Uint8Array | 
         "Verified ₹1,000 annual membership fee"
     ).trim();
 
+    // Validation
     let isValid = true;
     let error: string | undefined;
 
@@ -148,6 +208,8 @@ export function parseMembershipSheet(bufferOrString: ArrayBuffer | Uint8Array | 
       error = "Missing full name";
     } else if (seenPrns.has(prn)) {
       duplicatePrns.push(prn);
+      isValid = false;
+      error = "Duplicate PRN";
     } else {
       seenPrns.add(prn);
     }
@@ -160,7 +222,7 @@ export function parseMembershipSheet(bufferOrString: ArrayBuffer | Uint8Array | 
       branch,
       academic_year: academicYear,
       payment_status: paymentStatus,
-      fee_amount: feeAmount || 1000,
+      fee_amount: feeAmount,
       payment_mode: paymentMode,
       verification_notes: verificationNotes,
       isValid,

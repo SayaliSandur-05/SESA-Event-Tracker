@@ -14,9 +14,6 @@ export async function GET() {
     const csvContent = generateMembershipsCsv(memberships);
     const filename = `sesa_membership_roster_${new Date().toISOString().split("T")[0]}.csv`;
 
-    await db.logAudit(user.id, user.full_name, "MEMBERSHIP_CSV_EXPORTED", "memberships", "roster", {
-      totalExported: memberships.length,
-    });
 
     return new NextResponse(csvContent, {
       status: 200,
